@@ -1,0 +1,6 @@
+PyPDF2==3.0.1
+Pillow==11.0.0
+reportlab==4.4.3
+img2pdf==0.6.1
+PyMuPDF==1.26.3
+tkinter-tooltip==2.1.0 
