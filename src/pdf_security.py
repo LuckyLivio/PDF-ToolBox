@@ -9,8 +9,8 @@ class PDFSecurity:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
-    def encrypt_pdf(self, input_file: str, output_file: str, password: str, 
-                   user_password: Optional[str] = None) -> bool:
+    def encrypt_pdf(self, input_file: str, output_file: str, password: str,
+                   user_password: Optional[str] = None, permissions: Optional[dict] = None) -> bool:
         """
         加密PDF文件
         
@@ -37,10 +37,23 @@ class PDFSecurity:
                     writer.add_page(page)
                 
                 # 设置加密
-                if user_password:
-                    writer.encrypt(user_password, password)
-                else:
-                    writer.encrypt(password)
+                try:
+                    if user_password:
+                        if permissions is not None:
+                            writer.encrypt(user_password, password, permissions=permissions)
+                        else:
+                            writer.encrypt(user_password, password)
+                    else:
+                        if permissions is not None:
+                            writer.encrypt(password, permissions=permissions)
+                        else:
+                            writer.encrypt(password)
+                except TypeError:
+                    # 兼容不同PyPDF2版本的参数签名
+                    if user_password:
+                        writer.encrypt(user_password, password)
+                    else:
+                        writer.encrypt(password)
                 
                 with open(output_file, 'wb') as output:
                     writer.write(output)
@@ -52,7 +65,7 @@ class PDFSecurity:
             self.logger.error(f"PDF加密失败: {str(e)}")
             return False
     
-    def decrypt_pdf(self, input_file: str, output_file: str, password: str) -> bool:
+    def decrypt_pdf(self, input_file: str, output_file: str, password: str, cancel=None) -> bool:
         """
         解密PDF文件
         
@@ -84,6 +97,9 @@ class PDFSecurity:
                 
                 # 添加所有页面
                 for page in reader.pages:
+                    if cancel and callable(cancel) and cancel():
+                        self.logger.info("解密已取消")
+                        return False
                     writer.add_page(page)
                 
                 with open(output_file, 'wb') as output:
@@ -154,7 +170,7 @@ class PDFSecurity:
             self.logger.error(f"获取加密信息失败: {str(e)}")
             return None
     
-    def remove_password(self, input_file: str, output_file: str, password: str) -> bool:
+    def remove_password(self, input_file: str, output_file: str, password: str, cancel=None) -> bool:
         """
         移除PDF密码保护
         
@@ -185,6 +201,9 @@ class PDFSecurity:
                 
                 # 添加所有页面
                 for page in reader.pages:
+                    if cancel and callable(cancel) and cancel():
+                        self.logger.info("移除密码已取消")
+                        return False
                     writer.add_page(page)
                 
                 # 复制元数据
@@ -199,4 +218,4 @@ class PDFSecurity:
                 
         except Exception as e:
             self.logger.error(f"密码移除失败: {str(e)}")
-            return False 
+            return False

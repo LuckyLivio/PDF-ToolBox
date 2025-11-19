@@ -9,7 +9,7 @@ class PDFMerger:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
-    def merge_pdfs(self, input_files: List[str], output_file: str) -> bool:
+    def merge_pdfs(self, input_files: List[str], output_file: str, cancel=None) -> bool:
         """
         合并多个PDF文件
         
@@ -24,6 +24,10 @@ class PDFMerger:
             merger = PdfMerger()
             
             for file_path in input_files:
+                if cancel and cancel():
+                    self.logger.info("合并已取消")
+                    merger.close()
+                    return False
                 if not os.path.exists(file_path):
                     self.logger.error(f"文件不存在: {file_path}")
                     return False
@@ -42,7 +46,7 @@ class PDFMerger:
             self.logger.error(f"PDF合并失败: {str(e)}")
             return False
     
-    def merge_pdfs_with_order(self, file_order: List[tuple], output_file: str) -> bool:
+    def merge_pdfs_with_order(self, file_order: List[tuple], output_file: str, cancel=None) -> bool:
         """
         按指定顺序合并PDF文件
         
@@ -57,6 +61,10 @@ class PDFMerger:
             merger = PdfMerger()
             
             for file_path, page_range in file_order:
+                if cancel and cancel():
+                    self.logger.info("合并已取消")
+                    merger.close()
+                    return False
                 if not os.path.exists(file_path):
                     self.logger.error(f"文件不存在: {file_path}")
                     return False
@@ -119,4 +127,4 @@ class PDFMerger:
                 return info
         except Exception as e:
             self.logger.error(f"获取PDF信息失败: {str(e)}")
-            return None 
+            return None

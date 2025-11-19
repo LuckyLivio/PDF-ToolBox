@@ -43,6 +43,7 @@ def main():
         
         # 创建应用
         app = PDFToolboxGUI(root)
+        root.protocol("WM_DELETE_WINDOW", app.on_close)
         
         # 启动主循环
         root.mainloop()
@@ -53,4 +54,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    main()

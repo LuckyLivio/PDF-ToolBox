@@ -3,6 +3,11 @@ from tkinter import ttk, filedialog, messagebox
 import os
 import threading
 import logging
+from PIL import Image, ImageTk
+try:
+    from tkintertooltip import ToolTip
+except Exception:
+    ToolTip = None
 
 class PDFToolboxGUI:
     """PDF工具箱主窗口"""
@@ -24,6 +29,10 @@ class PDFToolboxGUI:
         
         self.setup_ui()
         self.setup_logging()
+        # 启用列表拖拽排序
+        self._drag_start_index = None
+        # 加载配置
+        self.load_config()
     
     def init_pdf_modules(self):
         """初始化PDF处理模块"""
@@ -131,10 +140,14 @@ class PDFToolboxGUI:
         # 合并文件选择区域
         file_frame = ttk.LabelFrame(frame, text="选择要合并的PDF文件", padding="10")
         file_frame.pack(fill=tk.X, pady=(0, 10))
-        
+
         self.merge_file_list = []
+        self.merge_ranges = {}
         self.merge_file_listbox = tk.Listbox(file_frame, height=6)
         self.merge_file_listbox.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        self.merge_file_listbox.bind('<<ListboxSelect>>', self.on_merge_selection_change)
+        self.merge_file_listbox.bind('<Button-1>', self.on_merge_drag_start)
+        self.merge_file_listbox.bind('<B1-Motion>', self.on_merge_drag_motion)
         
         merge_scrollbar = ttk.Scrollbar(file_frame, orient=tk.VERTICAL, command=self.merge_file_listbox.yview)
         merge_scrollbar.grid(row=0, column=2, sticky=(tk.N, tk.S))
@@ -142,9 +155,29 @@ class PDFToolboxGUI:
         
         btn_frame = ttk.Frame(file_frame)
         btn_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E))
-        ttk.Button(btn_frame, text="选择PDF文件", command=self.add_merge_files).pack(side=tk.LEFT, padx=(0, 5))
+        btn_select = ttk.Button(btn_frame, text="选择PDF文件", command=self.add_merge_files)
+        btn_select.pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(btn_frame, text="移除选中", command=self.remove_selected_merge_file).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(btn_frame, text="清空列表", command=self.clear_merge_files).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="上移", command=self.move_merge_up).pack(side=tk.LEFT, padx=(10, 5))
+        ttk.Button(btn_frame, text="下移", command=self.move_merge_down).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="置顶", command=self.move_merge_top).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="置底", command=self.move_merge_bottom).pack(side=tk.LEFT, padx=(0, 5))
+
+        # 工具提示
+        if ToolTip:
+            ToolTip(btn_select, "选择多个PDF添加到合并列表")
+            ToolTip(self.merge_file_listbox, "支持拖拽排序，或使用上/下移按钮")
+
+        # 页范围设置
+        range_frame = ttk.Frame(file_frame)
+        range_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(8, 0))
+        ttk.Label(range_frame, text="选中文件页码范围：").pack(side=tk.LEFT)
+        self.merge_range_var = tk.StringVar(value="")
+        ttk.Entry(range_frame, textvariable=self.merge_range_var, width=20).pack(side=tk.LEFT, padx=(6, 6))
+        ttk.Button(range_frame, text="设置范围", command=self.set_merge_range).pack(side=tk.LEFT)
+        self.merge_range_hint = ttk.Label(range_frame, text="如：1-3,5,7-9（留空表示全部）", foreground="#888")
+        self.merge_range_hint.pack(side=tk.LEFT, padx=(10, 0))
 
         # 合并选项
         options_frame = ttk.LabelFrame(frame, text="合并选项", padding="10")
@@ -155,9 +188,13 @@ class PDFToolboxGUI:
         ttk.Entry(options_frame, textvariable=self.merge_output_var, width=30).grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=5)
         ttk.Button(options_frame, text="选择位置", command=self.select_merge_output).grid(row=0, column=2, padx=(10, 0), pady=5)
         
-        # 合并按钮
-        ttk.Button(frame, text="开始合并", command=self.merge_pdfs).pack(pady=10)
-        
+        # 预览与执行
+        preview_exec = ttk.Frame(frame)
+        preview_exec.pack(fill=tk.X)
+        ttk.Button(preview_exec, text="开始合并", command=self.merge_pdfs).pack(side=tk.LEFT, pady=10)
+        self.merge_preview_label = ttk.Label(preview_exec, text="预览区：选择文件显示第一页缩略图")
+        self.merge_preview_label.pack(side=tk.LEFT, padx=(20, 0))
+
         return frame
     
     def create_split_tab(self):
@@ -182,6 +219,8 @@ class PDFToolboxGUI:
         self.split_method = tk.StringVar(value="pages")
         ttk.Radiobutton(options_frame, text="按页数分割", variable=self.split_method, value="pages", command=self.update_split_mode).grid(row=0, column=1, sticky=tk.W, pady=5)
         ttk.Radiobutton(options_frame, text="按页码范围分割", variable=self.split_method, value="range", command=self.update_split_mode).grid(row=0, column=2, sticky=tk.W, pady=5)
+        ttk.Radiobutton(options_frame, text="按书签分割", variable=self.split_method, value="bookmark", command=self.update_split_mode).grid(row=0, column=3, sticky=tk.W, pady=5)
+        ttk.Radiobutton(options_frame, text="按大小分割", variable=self.split_method, value="size", command=self.update_split_mode).grid(row=0, column=4, sticky=tk.W, pady=5)
 
         # 每文件页数
         self.pages_per_file = tk.StringVar(value="1")
@@ -197,6 +236,18 @@ class PDFToolboxGUI:
         self.page_ranges_label = ttk.Label(options_frame, text="页码范围：")
         self.page_ranges_entry = ttk.Entry(options_frame, textvariable=self.page_ranges, width=30)
         self.page_ranges_hint = ttk.Label(options_frame, text="如：1-3,5,7-9", foreground="#888")
+
+        # 书签层级
+        self.bookmark_level = tk.StringVar(value="1")
+        self.bookmark_level_label = ttk.Label(options_frame, text="书签层级：")
+        self.bookmark_level_entry = ttk.Entry(options_frame, textvariable=self.bookmark_level, width=10)
+        self.bookmark_level_hint = ttk.Label(options_frame, text="1为顶层", foreground="#888")
+
+        # 目标大小
+        self.target_size_mb = tk.StringVar(value="10")
+        self.target_size_label = ttk.Label(options_frame, text="目标大小(MB)：")
+        self.target_size_entry = ttk.Entry(options_frame, textvariable=self.target_size_mb, width=10)
+        self.target_size_hint = ttk.Label(options_frame, text="近似切分，按平均页大小估算", foreground="#888")
 
         # 说明Label
         self.split_mode_desc = ttk.Label(options_frame, text="将PDF每N页分割为一个新文件", foreground="#0078d4")
@@ -224,8 +275,14 @@ class PDFToolboxGUI:
             self.page_ranges_label.grid_remove()
             self.page_ranges_entry.grid_remove()
             self.page_ranges_hint.grid_remove()
+            self.bookmark_level_label.grid_remove()
+            self.bookmark_level_entry.grid_remove()
+            self.bookmark_level_hint.grid_remove()
+            self.target_size_label.grid_remove()
+            self.target_size_entry.grid_remove()
+            self.target_size_hint.grid_remove()
             self.split_mode_desc.config(text="将PDF每N页分割为一个新文件")
-        else:
+        elif mode == "range":
             # 显示页码范围，隐藏每文件页数
             self.pages_per_file_label.grid_remove()
             self.pages_per_file_entry.grid_remove()
@@ -233,7 +290,43 @@ class PDFToolboxGUI:
             self.page_ranges_label.grid(row=1, column=0, sticky=tk.W, pady=5)
             self.page_ranges_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=5)
             self.page_ranges_hint.grid(row=1, column=2, sticky=tk.W, padx=(10, 0), pady=5)
+            self.bookmark_level_label.grid_remove()
+            self.bookmark_level_entry.grid_remove()
+            self.bookmark_level_hint.grid_remove()
+            self.target_size_label.grid_remove()
+            self.target_size_entry.grid_remove()
+            self.target_size_hint.grid_remove()
             self.split_mode_desc.config(text="将PDF按指定页码范围分割为多个文件，如：1-3,5,7-9")
+        elif mode == "bookmark":
+            # 显示书签层级
+            self.pages_per_file_label.grid_remove()
+            self.pages_per_file_entry.grid_remove()
+            self.pages_per_file_hint.grid_remove()
+            self.page_ranges_label.grid_remove()
+            self.page_ranges_entry.grid_remove()
+            self.page_ranges_hint.grid_remove()
+            self.bookmark_level_label.grid(row=1, column=0, sticky=tk.W, pady=5)
+            self.bookmark_level_entry.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
+            self.bookmark_level_hint.grid(row=1, column=2, sticky=tk.W, padx=(10, 0), pady=5)
+            self.target_size_label.grid_remove()
+            self.target_size_entry.grid_remove()
+            self.target_size_hint.grid_remove()
+            self.split_mode_desc.config(text="按指定层级书签分割PDF，如：层级1为顶层目录")
+        else:
+            # 按大小分割
+            self.pages_per_file_label.grid_remove()
+            self.pages_per_file_entry.grid_remove()
+            self.pages_per_file_hint.grid_remove()
+            self.page_ranges_label.grid_remove()
+            self.page_ranges_entry.grid_remove()
+            self.page_ranges_hint.grid_remove()
+            self.bookmark_level_label.grid_remove()
+            self.bookmark_level_entry.grid_remove()
+            self.bookmark_level_hint.grid_remove()
+            self.target_size_label.grid(row=1, column=0, sticky=tk.W, pady=5)
+            self.target_size_entry.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
+            self.target_size_hint.grid(row=1, column=2, sticky=tk.W, padx=(10, 0), pady=5)
+            self.split_mode_desc.config(text="按目标大小近似分割PDF（基于平均每页大小）")
     
     def create_convert_tab(self):
         """创建转换功能选项卡"""
@@ -256,9 +349,20 @@ class PDFToolboxGUI:
         ttk.Label(options_frame, text="转换类型:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.convert_type = tk.StringVar(value="PDF转图片")
         convert_combo = ttk.Combobox(options_frame, textvariable=self.convert_type, state="readonly")
-        convert_combo['values'] = ("PDF转图片", "图片转PDF", "PDF转文本", "PDF压缩")
+        convert_combo['values'] = ("PDF转图片", "图片转PDF", "PDF转文本", "PDF压缩", "提取图片")
         convert_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=5)
         convert_combo.bind('<<ComboboxSelected>>', self.on_convert_type_change)
+        if ToolTip:
+            ToolTip(convert_combo, "选择转换类型")
+
+        # 图片转换参数（仅PDF转图片）
+        self.image_format = tk.StringVar(value="PNG")
+        self.image_dpi = tk.StringVar(value="300")
+        self.image_format_label = ttk.Label(options_frame, text="图片格式：")
+        self.image_format_entry = ttk.Combobox(options_frame, textvariable=self.image_format, state="readonly")
+        self.image_format_entry['values'] = ("PNG", "JPEG", "TIFF")
+        self.image_dpi_label = ttk.Label(options_frame, text="DPI：")
+        self.image_dpi_entry = ttk.Entry(options_frame, textvariable=self.image_dpi, width=8)
 
         # 输出路径
         ttk.Label(options_frame, text="输出路径:").grid(row=1, column=0, sticky=tk.W, pady=5)
@@ -267,7 +371,10 @@ class PDFToolboxGUI:
         ttk.Button(options_frame, text="浏览", command=self.select_convert_output).grid(row=1, column=2, padx=(10, 0), pady=5)
 
         # 转换按钮
-        ttk.Button(frame, text="开始转换", command=self.convert_files).pack(pady=10)
+        btn_convert = ttk.Button(frame, text="开始转换", command=self.convert_files)
+        btn_convert.pack(pady=10)
+        if ToolTip:
+            ToolTip(btn_convert, "开始执行所选转换任务")
 
         return frame
 
@@ -282,6 +389,22 @@ class PDFToolboxGUI:
             self.convert_output.set("./images_output")
         elif t == "PDF压缩":
             self.convert_output.set("compressed.pdf")
+        elif t == "提取图片":
+            self.convert_output.set("./extracted_images")
+        # 参数控件显隐
+        if t == "PDF转图片":
+            self.image_format_label.grid(row=2, column=0, sticky=tk.W, pady=5)
+            self.image_format_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=5)
+            self.image_dpi_label.grid(row=2, column=2, sticky=tk.W, pady=5)
+            self.image_dpi_entry.grid(row=2, column=3, sticky=tk.W, padx=(10, 0), pady=5)
+        else:
+            try:
+                self.image_format_label.grid_remove()
+                self.image_format_entry.grid_remove()
+                self.image_dpi_label.grid_remove()
+                self.image_dpi_entry.grid_remove()
+            except:
+                pass
 
     def create_security_tab(self):
         """创建安全功能选项卡"""
@@ -316,6 +439,20 @@ class PDFToolboxGUI:
         self.user_password = tk.StringVar()
         ttk.Entry(options_frame, textvariable=self.user_password, show="*", width=20).grid(row=2, column=1, sticky=tk.W, padx=(10, 0), pady=5)
         ttk.Label(options_frame, text="(可选)").grid(row=2, column=2, sticky=tk.W, padx=(10, 0), pady=5)
+
+        # 权限设置
+        perm_frame = ttk.LabelFrame(frame, text="权限设置", padding="10")
+        perm_frame.pack(fill=tk.X, pady=(0, 10))
+        self.allow_print = tk.BooleanVar(value=True)
+        self.allow_copy = tk.BooleanVar(value=True)
+        self.allow_modify = tk.BooleanVar(value=False)
+        self.allow_annotate = tk.BooleanVar(value=True)
+        self.allow_fill_forms = tk.BooleanVar(value=True)
+        ttk.Checkbutton(perm_frame, text="允许打印", variable=self.allow_print).grid(row=0, column=0, sticky=tk.W)
+        ttk.Checkbutton(perm_frame, text="允许复制", variable=self.allow_copy).grid(row=0, column=1, sticky=tk.W)
+        ttk.Checkbutton(perm_frame, text="允许修改", variable=self.allow_modify).grid(row=0, column=2, sticky=tk.W)
+        ttk.Checkbutton(perm_frame, text="允许注释", variable=self.allow_annotate).grid(row=1, column=0, sticky=tk.W)
+        ttk.Checkbutton(perm_frame, text="允许表单填写", variable=self.allow_fill_forms).grid(row=1, column=1, sticky=tk.W)
         
         # 输出文件
         ttk.Label(options_frame, text="输出文件:").grid(row=3, column=0, sticky=tk.W, pady=5)
@@ -324,7 +461,13 @@ class PDFToolboxGUI:
         ttk.Button(options_frame, text="选择文件", command=self.select_security_output).grid(row=3, column=2, padx=(10, 0), pady=5)
         
         # 安全操作按钮
-        ttk.Button(frame, text="执行操作", command=self.perform_security_operation).pack(pady=10)
+        btns = ttk.Frame(frame)
+        btns.pack()
+        btn_exec = ttk.Button(btns, text="执行操作", command=self.perform_security_operation)
+        btn_exec.pack(side=tk.LEFT, pady=10)
+        ttk.Button(btns, text="查看加密信息", command=self.show_encryption_info).pack(side=tk.LEFT, padx=(10,0))
+        if ToolTip:
+            ToolTip(btn_exec, "根据选择的安全操作执行加密/解密/去密码")
         
         return frame
     
@@ -345,7 +488,13 @@ class PDFToolboxGUI:
         self.log_text.configure(yscrollcommand=log_scrollbar.set)
         
         # 清空日志按钮
-        ttk.Button(log_frame, text="清空日志", command=self.clear_log).grid(row=1, column=0, pady=(10, 0))
+        controls = ttk.Frame(log_frame)
+        controls.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(10,0))
+        ttk.Button(controls, text="清空日志", command=self.clear_log).pack(side=tk.LEFT)
+        self.progress = ttk.Progressbar(controls, mode='indeterminate', length=200)
+        self.progress.pack(side=tk.LEFT, padx=(10,0))
+        self.cancel_flag = False
+        ttk.Button(controls, text="取消当前操作", command=self.cancel_current_operation).pack(side=tk.LEFT, padx=(10,0))
     
     # 文件操作方法
     def add_files(self):
@@ -397,12 +546,14 @@ class PDFToolboxGUI:
         )
         if filename:
             self.merge_output_var.set(filename)
+            self.save_config()
     
     def select_split_output(self):
         """选择分割输出目录"""
         directory = filedialog.askdirectory(title="选择分割输出目录")
         if directory:
             self.split_output_dir.set(directory)
+            self.save_config()
     
     def select_convert_output(self):
         """选择转换输出路径"""
@@ -412,6 +563,7 @@ class PDFToolboxGUI:
             directory = filedialog.askdirectory(title="选择输出目录")
             if directory:
                 self.convert_output.set(directory)
+                self.save_config()
         elif convert_type in ['图片转PDF', 'PDF转文本', 'PDF压缩']:
             # 这些功能输出到文件
             filename = None
@@ -435,6 +587,7 @@ class PDFToolboxGUI:
                 )
             if filename:
                 self.convert_output.set(filename)
+                self.save_config()
     
     def select_security_output(self):
         """选择安全操作输出文件"""
@@ -445,6 +598,7 @@ class PDFToolboxGUI:
         )
         if filename:
             self.security_output.set(filename)
+            self.save_config()
     
     # 操作执行方法
     def add_merge_files(self):
@@ -456,16 +610,113 @@ class PDFToolboxGUI:
             if file not in self.merge_file_list:
                 self.merge_file_list.append(file)
                 self.merge_file_listbox.insert(tk.END, os.path.basename(file))
+                self.merge_ranges[file] = ""
 
     def remove_selected_merge_file(self):
         selection = self.merge_file_listbox.curselection()
         for index in reversed(selection):
             self.merge_file_listbox.delete(index)
-            self.merge_file_list.pop(index)
+            file = self.merge_file_list.pop(index)
+            if file in self.merge_ranges:
+                del self.merge_ranges[file]
 
     def clear_merge_files(self):
         self.merge_file_list.clear()
         self.merge_file_listbox.delete(0, tk.END)
+        self.merge_ranges.clear()
+
+    def move_merge_up(self):
+        sel = self.merge_file_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        if idx == 0:
+            return
+        self.merge_file_list[idx-1], self.merge_file_list[idx] = self.merge_file_list[idx], self.merge_file_list[idx-1]
+        self._refresh_merge_listbox(idx-1)
+
+    def move_merge_down(self):
+        sel = self.merge_file_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        if idx >= len(self.merge_file_list) - 1:
+            return
+        self.merge_file_list[idx+1], self.merge_file_list[idx] = self.merge_file_list[idx], self.merge_file_list[idx+1]
+        self._refresh_merge_listbox(idx+1)
+
+    def move_merge_top(self):
+        sel = self.merge_file_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        file = self.merge_file_list.pop(idx)
+        self.merge_file_list.insert(0, file)
+        self._refresh_merge_listbox(0)
+
+    def move_merge_bottom(self):
+        sel = self.merge_file_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        file = self.merge_file_list.pop(idx)
+        self.merge_file_list.append(file)
+        self._refresh_merge_listbox(len(self.merge_file_list)-1)
+
+    def _refresh_merge_listbox(self, select_index=None):
+        self.merge_file_listbox.delete(0, tk.END)
+        for f in self.merge_file_list:
+            name = os.path.basename(f)
+            rng = self.merge_ranges.get(f, "")
+            display = f"{name}" if not rng else f"{name}  [范围:{rng}]"
+            self.merge_file_listbox.insert(tk.END, display)
+        if select_index is not None:
+            self.merge_file_listbox.selection_clear(0, tk.END)
+            self.merge_file_listbox.selection_set(select_index)
+            self.merge_file_listbox.activate(select_index)
+
+    def set_merge_range(self):
+        sel = self.merge_file_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        file = self.merge_file_list[idx]
+        self.merge_ranges[file] = self.merge_range_var.get().strip()
+        self._refresh_merge_listbox(idx)
+
+    def on_merge_selection_change(self, event=None):
+        sel = self.merge_file_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        file = self.merge_file_list[idx]
+        current_range = self.merge_ranges.get(file, "")
+        self.merge_range_var.set(current_range)
+        # 生成预览缩略图
+        try:
+            preview_dir = os.path.join(os.getcwd(), "._preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            # 仅生成第一页
+            if hasattr(self, 'pdf_converter') and self.pdf_converter:
+                # 清理旧预览
+                for name in os.listdir(preview_dir):
+                    if name.startswith('page_') and name.endswith('.png'):
+                        try:
+                            os.remove(os.path.join(preview_dir, name))
+                        except:
+                            pass
+                self.pdf_converter.pdf_to_images(file, preview_dir, format='PNG', dpi=120, page_range=[1])
+                img_path = os.path.join(preview_dir, 'page_001.png')
+                if os.path.exists(img_path):
+                    im = Image.open(img_path)
+                    im.thumbnail((160, 160))
+                    self._merge_preview_image = ImageTk.PhotoImage(im)
+                    self.merge_preview_label.config(image=self._merge_preview_image, text="")
+                else:
+                    self.merge_preview_label.config(text="预览生成失败")
+        except Exception as e:
+            self.logger.error(f"预览生成失败: {e}")
+            self.merge_preview_label.config(text="预览生成失败")
 
     def merge_pdfs(self):
         """执行PDF合并"""
@@ -482,7 +733,20 @@ class PDFToolboxGUI:
         def merge_thread():
             try:
                 self.log_message("开始PDF合并...")
-                success = self.pdf_merger.merge_pdfs(self.merge_file_list, output_file)
+                self.cancel_flag = False
+                self.progress.start(10)
+                # 如果存在范围设置，则使用带顺序与范围的合并
+                file_order = []
+                use_order = False
+                for f in self.merge_file_list:
+                    rng = self.merge_ranges.get(f, "").strip()
+                    if rng:
+                        use_order = True
+                    file_order.append((f, rng if rng else None))
+                if use_order:
+                    success = self.pdf_merger.merge_pdfs_with_order(file_order, output_file, cancel=self.is_cancelled)
+                else:
+                    success = self.pdf_merger.merge_pdfs(self.merge_file_list, output_file, cancel=self.is_cancelled)
                 if success:
                     self.log_message("PDF合并成功完成")
                     messagebox.showinfo("成功", "PDF合并完成")
@@ -492,6 +756,11 @@ class PDFToolboxGUI:
             except Exception as e:
                 self.log_message(f"PDF合并出错: {str(e)}")
                 messagebox.showerror("错误", f"PDF合并出错: {str(e)}")
+            finally:
+                try:
+                    self.progress.stop()
+                except:
+                    pass
         threading.Thread(target=merge_thread, daemon=True).start()
     
     def select_split_file(self):
@@ -518,17 +787,34 @@ class PDFToolboxGUI:
         def split_thread():
             try:
                 self.log_message("开始PDF分割...")
+                self.cancel_flag = False
+                self.progress.start(10)
                 success = False
                 if self.split_method.get() == "pages":
                     try:
                         pages_per_file = int(self.pages_per_file.get())
-                        success = self.pdf_splitter.split_by_pages(input_file, output_dir, pages_per_file)
+                        success = self.pdf_splitter.split_by_pages(input_file, output_dir, pages_per_file, cancel=self.is_cancelled)
                     except ValueError:
                         messagebox.showerror("错误", "页数必须是数字")
                         return
-                else:
+                elif self.split_method.get() == "range":
                     page_ranges = [r.strip() for r in self.page_ranges.get().split(',')]
-                    success = self.pdf_splitter.split_by_page_ranges(input_file, output_dir, page_ranges)
+                    success = self.pdf_splitter.split_by_page_ranges(input_file, output_dir, page_ranges, cancel=self.is_cancelled)
+                elif self.split_method.get() == "bookmark":
+                    try:
+                        level = int(self.bookmark_level.get())
+                    except ValueError:
+                        messagebox.showerror("错误", "书签层级必须是数字")
+                        return
+                    success = self.pdf_splitter.split_by_bookmarks(input_file, output_dir, level, cancel=self.is_cancelled)
+                else:
+                    # size
+                    try:
+                        target_mb = float(self.target_size_mb.get())
+                    except ValueError:
+                        messagebox.showerror("错误", "目标大小必须是数字")
+                        return
+                    success = self.pdf_splitter.split_by_size(input_file, output_dir, target_mb, cancel=self.is_cancelled)
                 if success:
                     self.log_message("PDF分割成功完成")
                     messagebox.showinfo("成功", "PDF分割完成")
@@ -538,6 +824,11 @@ class PDFToolboxGUI:
             except Exception as e:
                 self.log_message(f"PDF分割出错: {str(e)}")
                 messagebox.showerror("错误", f"PDF分割出错: {str(e)}")
+            finally:
+                try:
+                    self.progress.stop()
+                except:
+                    pass
         threading.Thread(target=split_thread, daemon=True).start()
 
     def select_convert_files(self):
@@ -570,29 +861,38 @@ class PDFToolboxGUI:
         def convert_thread():
             try:
                 self.log_message("开始文件转换...")
+                self.cancel_flag = False
+                self.progress.start(10)
                 success = False
                 final_output_path = output_path
                 
                 if convert_type == 'PDF转图片':
+                    fmt = self.image_format.get() or 'PNG'
+                    try:
+                        dpi = int(self.image_dpi.get())
+                    except ValueError:
+                        dpi = 300
                     success = self.pdf_converter.pdf_to_images(
-                        self.convert_files_list[0], final_output_path, 
-                        format='PNG', dpi=300
+                        self.convert_files_list[0], final_output_path,
+                        format=fmt, dpi=dpi, cancel=self.is_cancelled
                     )
                 elif convert_type == '图片转PDF':
                     # 确保输出路径是文件而不是目录
                     if os.path.isdir(final_output_path):
                         final_output_path = os.path.join(final_output_path, "converted.pdf")
-                    success = self.pdf_converter.images_to_pdf(self.convert_files_list, final_output_path)
+                    success = self.pdf_converter.images_to_pdf(self.convert_files_list, final_output_path, cancel=self.is_cancelled)
                 elif convert_type == 'PDF转文本':
                     # 确保输出路径是文件而不是目录
                     if os.path.isdir(final_output_path):
                         final_output_path = os.path.join(final_output_path, "converted.txt")
-                    success = self.pdf_converter.pdf_to_text(self.convert_files_list[0], final_output_path)
+                    success = self.pdf_converter.pdf_to_text(self.convert_files_list[0], final_output_path, cancel=self.is_cancelled)
                 elif convert_type == 'PDF压缩':
                     # 确保输出路径是文件而不是目录
                     if os.path.isdir(final_output_path):
                         final_output_path = os.path.join(final_output_path, "compressed.pdf")
-                    success = self.pdf_converter.compress_pdf(self.convert_files_list[0], final_output_path)
+                    success = self.pdf_converter.compress_pdf(self.convert_files_list[0], final_output_path, cancel=self.is_cancelled)
+                elif convert_type == '提取图片':
+                    success = self.pdf_converter.extract_images(self.convert_files_list[0], final_output_path, cancel=self.is_cancelled)
                 
                 if success:
                     self.log_message("文件转换成功完成")
@@ -603,6 +903,11 @@ class PDFToolboxGUI:
             except Exception as e:
                 self.log_message(f"文件转换出错: {str(e)}")
                 messagebox.showerror("错误", f"文件转换出错: {str(e)}")
+            finally:
+                try:
+                    self.progress.stop()
+                except:
+                    pass
         
         threading.Thread(target=convert_thread, daemon=True).start()
 
@@ -636,13 +941,22 @@ class PDFToolboxGUI:
         def security_thread():
             try:
                 self.log_message("开始安全操作...")
+                self.cancel_flag = False
+                self.progress.start(10)
                 success = False
                 if operation == 'encrypt':
-                    success = self.pdf_security.encrypt_pdf(input_file, output_file, password, user_password)
+                    perms = {
+                        'print': self.allow_print.get(),
+                        'copy': self.allow_copy.get(),
+                        'modify': self.allow_modify.get(),
+                        'annotate': self.allow_annotate.get(),
+                        'fill_forms': self.allow_fill_forms.get()
+                    }
+                    success = self.pdf_security.encrypt_pdf(input_file, output_file, password, user_password, perms)
                 elif operation == 'decrypt':
-                    success = self.pdf_security.decrypt_pdf(input_file, output_file, password)
+                    success = self.pdf_security.decrypt_pdf(input_file, output_file, password, cancel=self.is_cancelled)
                 elif operation == 'remove_password':
-                    success = self.pdf_security.remove_password(input_file, output_file, password)
+                    success = self.pdf_security.remove_password(input_file, output_file, password, cancel=self.is_cancelled)
                 if success:
                     self.log_message("安全操作成功完成")
                     messagebox.showinfo("成功", "安全操作完成")
@@ -652,7 +966,31 @@ class PDFToolboxGUI:
             except Exception as e:
                 self.log_message(f"安全操作出错: {str(e)}")
                 messagebox.showerror("错误", f"安全操作出错: {str(e)}")
+            finally:
+                try:
+                    self.progress.stop()
+                except:
+                    pass
         threading.Thread(target=security_thread, daemon=True).start()
+
+    def show_encryption_info(self):
+        if not self.pdf_security:
+            messagebox.showerror("错误", "PDF安全模块未初始化")
+            return
+        if not self.security_file:
+            messagebox.showwarning("警告", "请选择要处理的PDF文件")
+            return
+        info = self.pdf_security.get_encryption_info(self.security_file)
+        if not info:
+            messagebox.showinfo("信息", "无法获取加密信息或文件不存在")
+            return
+        if not info.get('encrypted'):
+            messagebox.showinfo("信息", "当前PDF未加密")
+            return
+        text = []
+        for k, v in info.items():
+            text.append(f"{k}: {v}")
+        messagebox.showinfo("加密信息", "\n".join(text))
     
     # 日志方法
     def log_message(self, message):
@@ -660,7 +998,71 @@ class PDFToolboxGUI:
         self.log_text.insert(tk.END, f"{message}\n")
         self.log_text.see(tk.END)
         self.logger.info(message)
+
+    def cancel_current_operation(self):
+        self.cancel_flag = True
+
+    def is_cancelled(self):
+        return bool(self.cancel_flag)
     
     def clear_log(self):
         """清空日志"""
         self.log_text.delete(1.0, tk.END) 
+
+    # 配置持久化
+    def config_path(self):
+        return os.path.join(os.getcwd(), 'config.json')
+
+    def load_config(self):
+        try:
+            import json
+            p = self.config_path()
+            if os.path.exists(p):
+                with open(p, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                self.merge_output_var.set(cfg.get('merge_output', self.merge_output_var.get()))
+                self.split_output_dir.set(cfg.get('split_output', self.split_output_dir.get()))
+                self.convert_output.set(cfg.get('convert_output', self.convert_output.get()))
+                self.security_output.set(cfg.get('security_output', self.security_output.get()))
+        except Exception as e:
+            self.logger.error(f"加载配置失败: {e}")
+
+    def save_config(self):
+        try:
+            import json
+            cfg = {
+                'merge_output': self.merge_output_var.get(),
+                'split_output': self.split_output_dir.get(),
+                'convert_output': self.convert_output.get(),
+                'security_output': self.security_output.get()
+            }
+            with open(self.config_path(), 'w', encoding='utf-8') as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.error(f"保存配置失败: {e}")
+
+    def on_close(self):
+        try:
+            self.save_config()
+        finally:
+            self.root.destroy()
+    def on_merge_drag_start(self, event):
+        try:
+            self._drag_start_index = self.merge_file_listbox.nearest(event.y)
+        except:
+            self._drag_start_index = None
+
+    def on_merge_drag_motion(self, event):
+        if self._drag_start_index is None:
+            return
+        try:
+            new_index = self.merge_file_listbox.nearest(event.y)
+            if new_index != self._drag_start_index and 0 <= new_index < len(self.merge_file_list):
+                # 交换
+                self.merge_file_list[self._drag_start_index], self.merge_file_list[new_index] = (
+                    self.merge_file_list[new_index], self.merge_file_list[self._drag_start_index]
+                )
+                self._refresh_merge_listbox(new_index)
+                self._drag_start_index = new_index
+        except Exception as e:
+            self.logger.error(f"拖拽排序失败: {e}")

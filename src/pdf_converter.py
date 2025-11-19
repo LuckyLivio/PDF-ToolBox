@@ -12,7 +12,7 @@ class PDFConverter:
         self.logger = logging.getLogger(__name__)
     
     def pdf_to_images(self, input_file: str, output_dir: str, format: str = 'PNG', 
-                     dpi: int = 300, page_range: Optional[List[int]] = None) -> bool:
+                     dpi: int = 300, page_range: Optional[List[int]] = None, cancel=None) -> bool:
         """
         将PDF转换为图片
         
@@ -46,6 +46,10 @@ class PDFConverter:
             mat = fitz.Matrix(dpi / 72, dpi / 72)
             
             for page_num in pages_to_process:
+                if cancel and callable(cancel) and cancel():
+                    self.logger.info("转换已取消")
+                    pdf_document.close()
+                    return False
                 page = pdf_document.load_page(page_num)
                 pix = page.get_pixmap(matrix=mat)
                 
@@ -63,7 +67,7 @@ class PDFConverter:
             return False
     
     def images_to_pdf(self, image_files: List[str], output_file: str, 
-                     page_size: str = 'A4', orientation: str = 'portrait') -> bool:
+                     page_size: str = 'A4', orientation: str = 'portrait', cancel=None) -> bool:
         """
         将图片转换为PDF
         
@@ -88,6 +92,9 @@ class PDFConverter:
                     return False
             
             # 使用img2pdf转换
+            if cancel and callable(cancel) and cancel():
+                self.logger.info("转换已取消")
+                return False
             with open(output_file, "wb") as f:
                 f.write(img2pdf.convert(image_files))
             
@@ -97,9 +104,48 @@ class PDFConverter:
         except Exception as e:
             self.logger.error(f"图片转PDF失败: {str(e)}")
             return False
+
+    def extract_images(self, input_file: str, output_dir: str, cancel=None) -> bool:
+        """
+        从PDF中提取内嵌图片到目录
+        Args:
+            input_file: 输入PDF文件路径
+            output_dir: 输出目录
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            if not os.path.exists(input_file):
+                self.logger.error(f"文件不存在: {input_file}")
+                return False
+            os.makedirs(output_dir, exist_ok=True)
+            doc = fitz.open(input_file)
+            img_index = 1
+            for page_num in range(len(doc)):
+                if cancel and callable(cancel) and cancel():
+                    self.logger.info("提取图片已取消")
+                    doc.close()
+                    return False
+                page = doc.load_page(page_num)
+                images = page.get_images(full=True)
+                for img in images:
+                    xref = img[0]
+                    base = doc.extract_image(xref)
+                    ext = base.get('ext', 'png')
+                    img_bytes = base['image']
+                    out_path = os.path.join(output_dir, f"image_{page_num+1:03d}_{img_index}.{ext}")
+                    with open(out_path, 'wb') as out:
+                        out.write(img_bytes)
+                    self.logger.info(f"已提取: {out_path}")
+                    img_index += 1
+            doc.close()
+            return True
+        except Exception as e:
+            self.logger.error(f"提取图片失败: {str(e)}")
+            return False
     
     def pdf_to_text(self, input_file: str, output_file: str, 
-                   page_range: Optional[List[int]] = None) -> bool:
+                   page_range: Optional[List[int]] = None, cancel=None) -> bool:
         """
         将PDF转换为文本
         
@@ -126,6 +172,10 @@ class PDFConverter:
             
             with open(output_file, 'w', encoding='utf-8') as text_file:
                 for page_num in pages_to_process:
+                    if cancel and callable(cancel) and cancel():
+                        self.logger.info("转换已取消")
+                        pdf_document.close()
+                        return False
                     page = pdf_document.load_page(page_num)
                     text = page.get_text()
                     text_file.write(f"=== 第 {page_num + 1} 页 ===\n")
@@ -141,7 +191,7 @@ class PDFConverter:
             return False
     
     def compress_pdf(self, input_file: str, output_file: str, 
-                    quality: int = 85, image_quality: int = 70) -> bool:
+                    quality: int = 85, image_quality: int = 70, cancel=None) -> bool:
         """
         压缩PDF文件
         
@@ -165,6 +215,11 @@ class PDFConverter:
             new_doc = fitz.open()
             
             for page_num in range(len(pdf_document)):
+                if cancel and callable(cancel) and cancel():
+                    self.logger.info("压缩已取消")
+                    new_doc.close()
+                    pdf_document.close()
+                    return False
                 page = pdf_document.load_page(page_num)
                 new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
                 
@@ -223,4 +278,4 @@ class PDFConverter:
             
         except Exception as e:
             self.logger.error(f"获取PDF信息失败: {str(e)}")
-            return None 
+            return None
