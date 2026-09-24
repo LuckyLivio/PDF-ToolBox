@@ -1,148 +1,40 @@
-# PDF工具箱
+# PDF-ToolBox｜PDF 工具箱
 
-一个功能完整的PDF处理工具，支持PDF合并、分割、格式转换、加密等功能，提供友好的图形用户界面。
+一个本地运行的 Python 桌面工具，把常见 PDF 处理步骤集中到一个 Tkinter 窗口，适合不想上传文件到在线服务的场景。仓库含源码和打包脚本，**未提交可直接下载的 exe**。
 
-## 功能特性
+## 已实现
 
-### 🔗 PDF合并
-- 合并多个PDF文件
-- 支持按指定顺序合并
-- 支持选择特定页面范围
+| 模块 | 代码中可核对的功能 |
+| --- | --- |
+| 合并 | 添加和排序多个 PDF，按文件或选定页范围合并 |
+| 拆分 | 按页数、页码范围、书签或近似文件大小拆分；提取指定页 |
+| 转换 | PDF 转 PNG/JPEG/TIFF 或文本，图片转 PDF，PDF 压缩 |
+| 安全 | 加密、用已知密码解密、移除密码保护 |
 
-### ✂️ PDF分割
-- 按页数分割PDF文件
-- 按指定页码范围分割
-- 提取特定页面
+入口在 [`main.py`](main.py)，界面事件在 [`src/gui/main_window.py`](src/gui/main_window.py)，文件处理分为 [`src/pdf_merger.py`](src/pdf_merger.py)、[`src/pdf_splitter.py`](src/pdf_splitter.py)、[`src/pdf_converter.py`](src/pdf_converter.py) 和 [`src/pdf_security.py`](src/pdf_security.py)。仓库没有记录多人分工；以下是实现层面的面试讲解点，个人负责范围待作者确认。
 
-### 🔄 格式转换
-- PDF转图片（PNG、JPEG、TIFF）
-- 图片转PDF
-- PDF转文本
-- PDF压缩
+## 面试可讲的技术点
 
-### 🔒 安全功能
-- PDF加密
-- PDF解密
-- 移除密码保护
+1. 将 GUI 的文件选择、参数校验和日志反馈与 PDF 处理模块分开；耗时操作由界面线程外执行，避免窗口卡死。
+2. 统一处理用户可理解的 1 起始页码与库内部页码，并明确按“目标大小”拆分只是估算，压缩效果取决于源文件。
 
-## 系统要求
+## 从源码运行
 
-- Windows 10/11
-- Python 3.7+（开发环境）
-- 无需额外安装Python环境（使用打包后的exe文件）
+建议 Windows 10/11、Python 3.10+。在仓库根目录执行：
 
-## 安装和使用
-
-### 方法一：使用打包后的exe文件（推荐）
-
-1. 下载 `PDF工具箱.exe` 文件
-2. 双击运行，无需安装任何依赖
-
-### 方法二：从源码运行
-
-1. 克隆或下载项目源码
-2. 安装依赖包：
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. 运行主程序：
-   ```bash
-   python main.py
-   ```
-
-## 打包成exe
-
-如果你想自己打包exe文件：
-
-```bash
-python build_exe.py
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python main.py
 ```
 
-打包完成后，exe文件将生成在 `dist` 目录中。
+界面有合并、拆分、转换、安全四个页签。先选择输入文件与输出位置，再执行操作。处理自己的私有文件时，建议先用副本试运行。仓库暂无经核实可公开的截图或在线演示。
 
-## 项目结构
+如需自己打包，可在安装依赖后运行 `python build_exe.py`；脚本会尝试安装 PyInstaller。仓库当前没有预构建二进制，也没有验证所有 Windows 环境的兼容性。
 
-```
-PDFConverter/
-├── main.py                 # 主程序入口
-├── build_exe.py           # 打包脚本
-├── requirements.txt       # 依赖包列表
-├── README.md             # 项目说明
-└── src/                  # 源代码目录
-    ├── __init__.py
-    ├── pdf_merger.py     # PDF合并模块
-    ├── pdf_splitter.py   # PDF分割模块
-    ├── pdf_converter.py  # PDF转换模块
-    ├── pdf_security.py   # PDF安全模块
-    └── gui/              # 图形界面模块
-        ├── __init__.py
-        └── main_window.py # 主窗口界面
-```
+## 已知边界
 
-## 使用说明
-
-### PDF合并
-1. 点击"添加PDF文件"选择要合并的PDF文件
-2. 设置输出文件名
-3. 点击"开始合并"
-
-### PDF分割
-1. 选择一个PDF文件
-2. 选择分割方式（按页数或页码范围）
-3. 设置输出目录
-4. 点击"开始分割"
-
-### 格式转换
-1. 选择要转换的文件
-2. 选择转换类型
-3. 设置输出路径
-4. 点击"开始转换"
-
-### 安全操作
-1. 选择一个PDF文件
-2. 选择操作类型（加密/解密/移除密码）
-3. 输入密码
-4. 设置输出文件
-5. 点击"执行操作"
-
-## 技术栈
-
-- **Python 3.7+**: 主要编程语言
-- **tkinter**: 图形用户界面
-- **PyPDF2**: PDF文件处理
-- **PyMuPDF (fitz)**: PDF高级操作
-- **Pillow**: 图像处理
-- **img2pdf**: 图片转PDF
-- **PyInstaller**: 打包工具
-
-## 开发说明
-
-### 模块化设计
-项目采用模块化设计，每个功能都有独立的模块：
-- `pdf_merger.py`: 处理PDF合并相关功能
-- `pdf_splitter.py`: 处理PDF分割相关功能
-- `pdf_converter.py`: 处理格式转换相关功能
-- `pdf_security.py`: 处理安全相关功能
-- `gui/main_window.py`: 图形界面实现
-
-### 错误处理
-所有模块都包含完善的错误处理和日志记录，确保程序稳定运行。
-
-### 线程安全
-耗时操作使用多线程处理，避免界面卡顿。
-
-## 许可证
-
-本项目采用 MIT 许可证。
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 更新日志
-
-### v1.0.0
-- 初始版本发布
-- 支持PDF合并、分割、转换、加密等基本功能
-- 提供图形用户界面
-- 支持打包成独立exe文件 
+- 加解密需要已知密码；这不是密码破解工具。
+- 图像转 PDF、PDF 压缩可能改变图像质量；按大小拆分使用平均每页大小估算，结果不保证严格落在目标大小以内。
+- 未提供自动化 GUI 回归测试；具体文件格式和复杂 PDF 的兼容性需要按样本验证。
