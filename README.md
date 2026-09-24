@@ -11,7 +11,7 @@
 | 转换 | PDF 转 PNG/JPEG/TIFF 或文本，图片转 PDF，PDF 压缩 |
 | 安全 | 加密、用已知密码解密、移除密码保护 |
 
-入口在 [`main.py`](main.py)，界面事件在 [`src/gui/main_window.py`](src/gui/main_window.py)，文件处理分为 [`src/pdf_merger.py`](src/pdf_merger.py)、[`src/pdf_splitter.py`](src/pdf_splitter.py)、[`src/pdf_converter.py`](src/pdf_converter.py) 和 [`src/pdf_security.py`](src/pdf_security.py)。仓库没有记录多人分工；以下是实现层面的面试讲解点，个人负责范围待作者确认。
+**个人贡献**：本项目由我独立完成。我实现了 Tkinter 界面及其文件选择、参数校验和处理反馈，并将 PDF 合并、拆分、转换和安全功能拆成独立模块。入口在 [`main.py`](main.py)，界面事件在 [`src/gui/main_window.py`](src/gui/main_window.py)，处理模块见 [`src/pdf_merger.py`](src/pdf_merger.py)、[`src/pdf_splitter.py`](src/pdf_splitter.py)、[`src/pdf_converter.py`](src/pdf_converter.py) 和 [`src/pdf_security.py`](src/pdf_security.py)。
 
 ## 面试可讲的技术点
 
